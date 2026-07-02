@@ -1,0 +1,8 @@
+# your own runs (the example/ vault IS committed)
+/my-vault/
+.env
+
+# memcli runtime state inside vaults
+.trip2g-memory/
+.obsidian/
+hub.md
