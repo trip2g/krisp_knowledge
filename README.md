@@ -126,7 +126,8 @@ To have the cascade run by itself on every new transcript:
 KRISP_TOKEN=... KRISP_BASE_URL=https://api.krisp.ai fleet \
   --trip2g-url http://localhost:20181 \
   --callback-url http://127.0.0.1:9090 \
-  --jwt-secret <JWT_SECRET from the vault's .trip2g-memory/env> \
+  --trip2g-admin-personal-token \
+      <OWNER_PERSONAL_TOKEN_VALUE from the vault's .trip2g-memory/env> \
   --fleet-secret $(openssl rand -hex 32) \
   --llm-base-url https://openrouter.ai/api/v1 \
   --llm-api-key $OPENROUTER_API_KEY \
@@ -135,6 +136,12 @@ KRISP_TOKEN=... KRISP_BASE_URL=https://api.krisp.ai fleet \
 
 The cron ingest role pulls new Krisp calls every 15 minutes; each written transcript
 wakes segmentation; each call note wakes extraction.
+
+`memcli up` generates `OWNER_PERSONAL_TOKEN_VALUE` into the vault's state dir and the
+instance seeds it as an admin personal token at boot — that one value is the fleet's
+whole access to the hub, and revoking the row in the admin UI cuts the fleet off
+without stopping the instance. Both halves are recent: the instance must be new enough
+to seed the token, and memcli new enough to generate it.
 
 **Caveat:** trip2g's webhook SSRF guard blocks deliveries to loopback/private
 addresses unless the server runs with `DEV=true`. The stock memcli container does not
