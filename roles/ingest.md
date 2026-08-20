@@ -1,10 +1,9 @@
 ---
 description: "Krisp meetings -> verbatim transcript notes (cron ingest, deterministic, no LLM)"
+fleet_id: krisp-code
 mode: cron
 cron_schedule: "*/15 * * * *"
-executor: code
 write_patterns: ["transcripts/**"]
-env_passthrough: ["KRISP_TOKEN", "KRISP_BASE_URL"]
 max_depth: 1
 timeout_seconds: 120
 ---
@@ -18,37 +17,21 @@ a millisecond timestamp). That time, never the local clock, is the authority for
 `created_at`, filenames, sorting, and daily bucketing. Writing a transcript note is what
 wakes the segmentation role.
 
+This body runs in codellm, not in the fleet — `fleet_id: krisp-code` routes it to the
+fleet whose `--llm-base-url` points at a codellm service. `KRISP_TOKEN` and
+`KRISP_BASE_URL` arrive as ordinary environment variables because codellm holds them
+and lists them in its own `CODELLM_EXPOSE_ENV`; the role declares nothing about env and
+the fleet never holds the values.
+
 ```python
 import os
 import json
 import datetime
-import urllib.request
+import requests
 
 base_url = os.environ['KRISP_BASE_URL'].rstrip('/')
-token = os.environ['KRISP_TOKEN']
-
-
-def api_post(path, payload):
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        base_url + path,
-        data=data,
-        headers={
-            'Authorization': 'Bearer ' + token,
-            'Content-Type': 'application/json',
-        },
-    )
-    with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read())
-
-
-def api_get(path):
-    req = urllib.request.Request(
-        base_url + path,
-        headers={'Authorization': 'Bearer ' + token},
-    )
-    with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read())
+session = requests.Session()
+session.headers['Authorization'] = 'Bearer ' + os.environ['KRISP_TOKEN']
 
 
 def decode_uuid7_utc(meeting_id):
@@ -57,7 +40,11 @@ def decode_uuid7_utc(meeting_id):
     return datetime.datetime.fromtimestamp(ms / 1000.0, datetime.timezone.utc)
 
 
-resp = api_post('/v2/meetings/list', {'page': 1, 'limit': 100, 'isOwner': True})
+resp = session.post(
+    base_url + '/v2/meetings/list',
+    json={'page': 1, 'limit': 100, 'isOwner': True},
+    timeout=30,
+).json()
 meetings = resp.get('data', {}).get('rows', [])
 
 changes = []
@@ -67,7 +54,7 @@ for meeting in meetings:
     speakers = meeting.get('speakers', [])
     created = decode_uuid7_utc(mid)
 
-    tree = api_get('/v2/block/' + mid + '/tree')
+    tree = session.get(base_url + '/v2/block/' + mid + '/tree', timeout=30).json()
 
     lines = [
         '---',

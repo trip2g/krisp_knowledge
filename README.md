@@ -31,7 +31,7 @@ UUIDv7 with a millisecond timestamp), never from the local clock.
 Three role-notes in [`roles/`](roles); the fleet turns each into a webhook:
 
 ```
-Krisp API ──(cron)── roles/ingest.md    executor: code, no LLM — verbatim transcripts
+Krisp API ──(cron)── roles/ingest.md    code via codellm, no LLM — verbatim transcripts
                           │ writes transcripts/**
                           ▼ change-webhook
                      roles/segment.md   LLM — topic boundaries, inferred title, quoted evidence
@@ -106,7 +106,7 @@ Each run prints a JSON result (`status`, `tokens_used`, the notes written) and w
 the notes into the folder. Cost is a few cents per call on `openai/gpt-5.4-mini` (the
 default in the roles; override with the `model:` frontmatter field).
 
-`--once` covers the LLM roles. The ingest role uses `executor: code` and runs on the
+`--once` covers the LLM roles. The ingest role is a code body run by codellm on the
 fleet daemon (below); for local testing, drop transcript files into `transcripts/`
 yourself — any note with `Name | MM:SS` lines and a `created_at` in the frontmatter
 works.
@@ -118,24 +118,63 @@ To have the cascade run by itself on every new transcript:
 1. Serve your vault: `memcli up --folder <your-vault>` (two-way sync: notes the fleet
    writes appear back in your folder).
 2. Copy `roles/` into the vault — the fleet discovers role-notes under `roles/`.
-3. Run the fleet daemon against the instance (see
+3. Run **two** fleets and one codellm. A fleet serves exactly one LLM endpoint, and
+   code no longer runs inside the fleet process: `ingest.md` is executed by
+   [codellm](https://github.com/trip2g/trip2g/blob/main/cmd/codellm/README.md), a
+   service that speaks the OpenAI API and runs the fenced block instead of predicting
+   text. Each role picks its fleet by `fleet_id`, so the two never collide. See
    [`docs/dev/fleet_run.md`](https://github.com/trip2g/trip2g/blob/main/docs/dev/fleet_run.md)
-   in the trip2g repo for flags, keys, and networking):
+   for the rest of the flags.
+
+codellm holds the Krisp credentials and decides what a block may see:
 
 ```bash
-KRISP_TOKEN=... KRISP_BASE_URL=https://api.krisp.ai fleet \
+CODELLM_ADDR=127.0.0.1:8082 \
+CODELLM_ALLOWED_PROGRAMS=python \
+CODELLM_SANDBOX_NETWORK=true \
+CODELLM_API_KEY=$(openssl rand -hex 32) \
+CODELLM_TRIP2G_URL=http://localhost:20181 \
+CODELLM_EXPOSE_ENV=KRISP_TOKEN,KRISP_BASE_URL \
+KRISP_TOKEN=... KRISP_BASE_URL=https://api.krisp.ai \
+  codellm
+```
+
+The LLM fleet, for `segment.md` and `extract.md` (`fleet_id: krisp-llm`):
+
+```bash
+fleet \
+  --fleet-id krisp-llm \
   --trip2g-url http://localhost:20181 \
   --callback-url http://127.0.0.1:9090 \
+  --listen :9090 \
   --trip2g-admin-personal-token \
       <OWNER_PERSONAL_TOKEN_VALUE from the vault's .trip2g-memory/env> \
   --fleet-secret $(openssl rand -hex 32) \
   --llm-base-url https://openrouter.ai/api/v1 \
-  --llm-api-key $OPENROUTER_API_KEY \
-  --allowed-programs python --sandbox-network true
+  --llm-api-key $OPENROUTER_API_KEY
+```
+
+The code fleet, for `ingest.md` (`fleet_id: krisp-code`) — same shape, pointed at
+codellm instead of a model provider, and holding no Krisp secret of its own:
+
+```bash
+fleet \
+  --fleet-id krisp-code \
+  --trip2g-url http://localhost:20181 \
+  --callback-url http://127.0.0.1:9091 \
+  --listen :9091 \
+  --trip2g-admin-personal-token \
+      <OWNER_PERSONAL_TOKEN_VALUE from the vault's .trip2g-memory/env> \
+  --fleet-secret $(openssl rand -hex 32) \
+  --llm-base-url http://127.0.0.1:8082/v1 \
+  --llm-api-key $CODELLM_API_KEY
 ```
 
 The cron ingest role pulls new Krisp calls every 15 minutes; each written transcript
 wakes segmentation; each call note wakes extraction.
+
+A role without a `fleet_id` belongs to no fleet and is skipped with a warning — that is
+deliberate, so two fleets can never both claim the same role.
 
 `memcli up` generates `OWNER_PERSONAL_TOKEN_VALUE` into the vault's state dir and the
 instance seeds it as an admin personal token at boot — that one value is the fleet's
@@ -167,7 +206,7 @@ a human confirms inferred titles and spot-checks quotes.
 ## Files
 
 ```
-roles/ingest.md       Krisp API -> transcripts/**   (executor: code, cron, no LLM)
+roles/ingest.md       Krisp API -> transcripts/**   (code via codellm, cron, no LLM)
 roles/segment.md      transcripts/** -> calls/**    (LLM, change-webhook)
 roles/extract.md      calls/** -> concepts, daily, log  (LLM, change-webhook)
 vault-templates/      magazine index pages, _header/_footer
