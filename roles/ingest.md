@@ -27,11 +27,14 @@ the fleet never holds the values.
 import os
 import json
 import datetime
-import requests
+import httpx
+import yaml
 
-base_url = os.environ['KRISP_BASE_URL'].rstrip('/')
-session = requests.Session()
-session.headers['Authorization'] = 'Bearer ' + os.environ['KRISP_TOKEN']
+client = httpx.Client(
+    base_url=os.environ['KRISP_BASE_URL'].rstrip('/'),
+    headers={'Authorization': 'Bearer ' + os.environ['KRISP_TOKEN']},
+    timeout=30,
+)
 
 
 def decode_uuid7_utc(meeting_id):
@@ -40,11 +43,7 @@ def decode_uuid7_utc(meeting_id):
     return datetime.datetime.fromtimestamp(ms / 1000.0, datetime.timezone.utc)
 
 
-resp = session.post(
-    base_url + '/v2/meetings/list',
-    json={'page': 1, 'limit': 100, 'isOwner': True},
-    timeout=30,
-).json()
+resp = client.post('/v2/meetings/list', json={'page': 1, 'limit': 100, 'isOwner': True}).json()
 meetings = resp.get('data', {}).get('rows', [])
 
 changes = []
@@ -54,19 +53,17 @@ for meeting in meetings:
     speakers = meeting.get('speakers', [])
     created = decode_uuid7_utc(mid)
 
-    tree = session.get(base_url + '/v2/block/' + mid + '/tree', timeout=30).json()
+    tree = client.get('/v2/block/' + mid + '/tree').json()
 
-    lines = [
-        '---',
-        'title: "Krisp call ' + mid[:8] + '"',
-        'type: transcript',
-        'created_at: "' + created.isoformat() + '"',
-        'source: krisp',
-        'call_id: "' + mid + '"',
-        '---',
-        '# ' + name,
-        '',
-    ]
+    meta = {
+        'title': 'Krisp call ' + mid[:8],
+        'type': 'transcript',
+        'created_at': created.isoformat(),
+        'source': 'krisp',
+        'call_id': mid,
+    }
+    front = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True).rstrip()
+    lines = ['---', front, '---', '# ' + name, '']
     for child in tree.get('children', []):
         if child.get('block_type') != 'utterance':
             continue
