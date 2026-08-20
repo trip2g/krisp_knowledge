@@ -18,17 +18,18 @@ a millisecond timestamp). That time, never the local clock, is the authority for
 wakes the segmentation role.
 
 This body runs in codellm, not in the fleet — `fleet_id: krisp-code` routes it to the
-fleet whose `--llm-base-url` points at a codellm service. `KRISP_TOKEN` and
+fleet whose `--llm-base-url` points at a codellm service. `fleetkit` is the helper the
+codellm image ships: it renders the frontmatter and prints the `{changes, answer}`
+contract, so this role states what a note contains rather than how to serialise it. `KRISP_TOKEN` and
 `KRISP_BASE_URL` arrive as ordinary environment variables because codellm holds them
 and lists them in its own `CODELLM_EXPOSE_ENV`; the role declares nothing about env and
 the fleet never holds the values.
 
 ```python
 import os
-import json
 import datetime
 import httpx
-import yaml
+import fleetkit
 
 client = httpx.Client(
     base_url=os.environ['KRISP_BASE_URL'].rstrip('/'),
@@ -62,8 +63,7 @@ for meeting in meetings:
         'source': 'krisp',
         'call_id': mid,
     }
-    front = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True).rstrip()
-    lines = ['---', front, '---', '# ' + name, '']
+    lines = ['# ' + name, '']
     for child in tree.get('children', []):
         if child.get('block_type') != 'utterance':
             continue
@@ -83,7 +83,7 @@ for meeting in meetings:
         lines.append('')
 
     path = 'transcripts/' + created.strftime('%Y-%m-%d') + '-' + mid[:8] + '.md'
-    changes.append({'path': path, 'content': '\n'.join(lines)})
+    changes.append(fleetkit.note(path, meta, '\n'.join(lines)))
 
-print(json.dumps({'changes': changes, 'answer': 'ingested ' + str(len(changes))}))
+fleetkit.emit(changes, 'ingested ' + str(len(changes)))
 ```
