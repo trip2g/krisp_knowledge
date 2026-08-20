@@ -1,5 +1,6 @@
 ---
 description: "Transcript -> call note: topic boundaries, inferred title, quoted evidence (step 1 of 2)"
+fleet_id: krisp-llm
 model: openai/gpt-5.4-mini
 tools: [write_note]
 read_patterns: ["transcripts/**"]

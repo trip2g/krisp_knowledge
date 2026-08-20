@@ -1,5 +1,6 @@
 ---
 description: "Call note -> concept glossary, daily note, topic logs (step 2 of 2)"
+fleet_id: krisp-llm
 model: openai/gpt-5.4-mini
 tools: [search, read_note, write_note, patch_note]
 read_patterns: ["calls/**", "transcripts/**", "concepts/**", "daily/**", "log/**"]
