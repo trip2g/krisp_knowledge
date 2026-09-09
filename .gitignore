@@ -6,3 +6,8 @@
 .trip2g-memory/
 .obsidian/
 hub.md
+
+# simple_v2 build artefacts
+__pycache__/
+*.pyc
+simple_v2/calls.zip
